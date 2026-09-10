@@ -68,6 +68,7 @@ return [
   // ============================================
   // ERROR MESSAGES
   // ============================================
+  'BOX NOW cannot create this voucher because the order currency (%1$s) cannot be converted to the BOX NOW account currency (%2$s).' => 'BOX NOW cannot create this voucher because the order currency (%1$s) cannot be converted to the BOX NOW account currency (%2$s).',
   'Invalid product dimensions - please ensure the product(s) fit in a BOX NOW locker!' => 'Invalid product dimensions - please ensure the product(s) fit in a BOX NOW locker!',
   'Invalid order number' => 'Invalid order number',
   'Error generating voucher' => 'Error generating voucher',

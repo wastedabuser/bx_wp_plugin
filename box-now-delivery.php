@@ -2045,6 +2045,97 @@ if (in_array('woocommerce/woocommerce.php', apply_filters('active_plugins', get_
     return (string) apply_filters('boxnow_order_reference', $reference, $order_id);
   }
 
+  /**
+   * Return the currency used by the BOX NOW partner account.
+   *
+   * The delivery-request JSON schema does not accept a currency field. BOX NOW
+   * interprets all monetary values in the currency assigned to the partner
+   * account. The accounts supported by this plugin use EUR, while the filter
+   * allows an integration to override that if BOX NOW assigns another currency.
+   *
+   * @param WC_Order $order
+   * @return string ISO 4217 currency code.
+   */
+  function boxnow_get_api_currency($order)
+  {
+    $currency = strtoupper((string) apply_filters('boxnow_api_currency', 'EUR', $order));
+
+    return preg_match('/^[A-Z]{3}$/', $currency) ? $currency : 'EUR';
+  }
+
+  /**
+   * Get the multiplier used to convert an order amount to the BOX NOW currency.
+   *
+   * BGN/EUR uses Bulgaria's irrevocably fixed conversion rate. Other currency
+   * pairs must be supplied by a currency integration using the filter below.
+   * The rate should be captured by that integration at checkout/order creation,
+   * rather than fetched when a voucher happens to be generated.
+   *
+   * @param string   $source_currency Order currency.
+   * @param string   $target_currency BOX NOW account currency.
+   * @param WC_Order $order
+   * @return float
+   * @throws Exception When no safe conversion rate is available.
+   */
+  function boxnow_get_currency_conversion_rate($source_currency, $target_currency, $order)
+  {
+    $source_currency = strtoupper((string) $source_currency);
+    $target_currency = strtoupper((string) $target_currency);
+    $rate            = null;
+
+    if ($source_currency === $target_currency) {
+      $rate = 1.0;
+    } elseif ($source_currency === 'BGN' && $target_currency === 'EUR') {
+      $rate = 1 / 1.95583;
+    } elseif ($source_currency === 'EUR' && $target_currency === 'BGN') {
+      $rate = 1.95583;
+    }
+
+    /**
+     * Filter the multiplier for converting an order amount to BOX NOW currency.
+     *
+     * Return null (the default for unknown pairs) to prevent voucher creation.
+     *
+     * @param float|null $rate
+     * @param string     $source_currency
+     * @param string     $target_currency
+     * @param WC_Order   $order
+     */
+    $rate = apply_filters(
+      'boxnow_currency_conversion_rate',
+      $rate,
+      $source_currency,
+      $target_currency,
+      $order
+    );
+
+    if (!is_numeric($rate) || (float) $rate <= 0) {
+      throw new Exception(sprintf(
+        /* translators: 1: WooCommerce order currency, 2: BOX NOW account currency */
+        __('BOX NOW cannot create this voucher because the order currency (%1$s) cannot be converted to the BOX NOW account currency (%2$s).', 'boxnowbulgaria'),
+        $source_currency,
+        $target_currency
+      ));
+    }
+
+    return (float) $rate;
+  }
+
+  /**
+   * Convert and round a monetary amount down to the two decimals accepted by
+   * BOX NOW. This mirrors the store's dual-price EUR display calculation.
+   *
+   * @param float $amount
+   * @param float $exchange_rate Multiplier from order currency to API currency.
+   * @return float
+   */
+  function boxnow_convert_currency_amount($amount, $exchange_rate)
+  {
+    $converted_amount = (float) $amount * (float) $exchange_rate;
+
+    return floor($converted_amount * 100) / 100;
+  }
+
   // This is the delivery request only for the boxnow_order_completed function
   function boxnow_order_completed_delivery_request($prep_data, $order_id, $num_vouchers)
   {
@@ -2078,9 +2169,9 @@ if (in_array('woocommerce/woocommerce.php', apply_filters('active_plugins', get_
     $data = [
       "notifyOnAccepted" => $send_voucher_via_button ? get_option('boxnow_voucher_button', '') : '',
       "orderNumber" => $randStr,
-      "invoiceValue" => $payment_method === 'cod' ? number_format($prep_data['order_total'], 2, '.', '') : "0",
+      "invoiceValue" => number_format($prep_data['order_total'], 2, '.', ''),
       "paymentMode" => $payment_method === 'cod' ? "cod" : "prepaid",
-      "amountToBeCollected" => $payment_method === 'cod' ? number_format($prep_data['order_total'], 2, '.', '') : "0",
+      "amountToBeCollected" => $payment_method === 'cod' ? number_format($prep_data['order_total'], 2, '.', '') : "0.00",
       "allowReturn" => true,
       "origin" => [
         "contactName" => get_option('boxnow_sender_name', ''),
@@ -2206,8 +2297,39 @@ if (in_array('woocommerce/woocommerce.php', apply_filters('active_plugins', get_
     }
 
     $prep_data['payment_method'] = $order->get_payment_method();
-    $prep_data['order_total'] = $order->get_total();
-    $prep_data['product_price'] = number_format(strval($order->get_subtotal()), 2, '.', '');
+
+    // WooCommerce stores totals in the currency recorded on the order. BOX NOW's
+    // JSON API has no currency property and treats every value as the partner
+    // account currency, so convert before any monetary value reaches the payload.
+    $source_currency = strtoupper((string) $order->get_currency());
+    if ($source_currency === '') {
+      $source_currency = strtoupper((string) get_woocommerce_currency());
+    }
+    $api_currency = boxnow_get_api_currency($order);
+    $exchange_rate = boxnow_get_currency_conversion_rate($source_currency, $api_currency, $order);
+
+    $prep_data['source_currency'] = $source_currency;
+    $prep_data['api_currency'] = $api_currency;
+    $prep_data['exchange_rate'] = $exchange_rate;
+    $prep_data['order_total'] = boxnow_convert_currency_amount($order->get_total(), $exchange_rate);
+    $prep_data['product_price'] = number_format(
+      boxnow_convert_currency_amount($order->get_subtotal(), $exchange_rate),
+      2,
+      '.',
+      ''
+    );
+
+    // Keep the exact conversion used for this voucher visible to integrations
+    // and future troubleshooting, including historical BGN orders.
+    $order->update_meta_data('_boxnow_source_currency', $source_currency);
+    $order->update_meta_data('_boxnow_api_currency', $api_currency);
+    $order->update_meta_data('_boxnow_currency_conversion_rate', number_format($exchange_rate, 8, '.', ''));
+    $order->update_meta_data('_boxnow_invoice_value', number_format($prep_data['order_total'], 2, '.', ''));
+    $order->update_meta_data(
+      '_boxnow_amount_to_be_collected',
+      $prep_data['payment_method'] === 'cod' ? number_format($prep_data['order_total'], 2, '.', '') : '0.00'
+    );
+    $order->save();
 
     // Validate the whole order against the largest BOX NOW compartment using the
     // same geometry the checkout uses, so an order that was allowed to check out
@@ -2311,9 +2433,9 @@ if (in_array('woocommerce/woocommerce.php', apply_filters('active_plugins', get_
     $data = [
       "notifyOnAccepted" => $send_voucher_via_button ? get_option('boxnow_voucher_button', '') : '',
       "orderNumber" => $randStr,
-      "invoiceValue" => $payment_method === 'cod' ? number_format($prep_data['order_total'], 2, '.', '') : "0",
+      "invoiceValue" => number_format($prep_data['order_total'], 2, '.', ''),
       "paymentMode" => $payment_method === 'cod' ? "cod" : "prepaid",
-      "amountToBeCollected" => $payment_method === 'cod' ? number_format($prep_data['order_total'], 2, '.', '') : "0",
+      "amountToBeCollected" => $payment_method === 'cod' ? number_format($prep_data['order_total'], 2, '.', '') : "0.00",
       "allowReturn" => true,
       "origin" => [
         "contactName" => get_option('boxnow_sender_name', ''),
@@ -2733,7 +2855,7 @@ if (in_array('woocommerce/woocommerce.php', apply_filters('active_plugins', get_
       $prep_data = boxnow_prepare_data($order);
     } catch (Exception $e) {
       boxnow_log('BOX NOW: Error preparing data: ' . $e->getMessage());
-      wp_send_json_error(__('Invalid product dimensions - please ensure the product(s) fit in a BOX NOW locker!', 'boxnowbulgaria'));
+      wp_send_json_error($e->getMessage());
       return;
     }
 

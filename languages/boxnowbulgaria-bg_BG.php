@@ -68,6 +68,7 @@ return [
   // ============================================
   // ERROR MESSAGES
   // ============================================
+  'BOX NOW cannot create this voucher because the order currency (%1$s) cannot be converted to the BOX NOW account currency (%2$s).' => 'BOX NOW не може да създаде тази товарителница, защото валутата на поръчката (%1$s) не може да бъде конвертирана във валутата на BOX NOW акаунта (%2$s).',
   'Invalid product dimensions - please ensure the product(s) fit in a BOX NOW locker!' => 'Невалидни размери на продукта(продуктите) - моля уверете се че продукта(продуктите) се събират в автомат на BOX NOW!',
   'Invalid order number' => 'Невалиден номер на поръчка',
   'Error generating voucher' => 'Грешка при генериране на товарителница',
