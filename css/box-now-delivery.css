@@ -166,6 +166,7 @@
 }
 
 /* Classic checkout: prevent label/price overlap across themes */
+/*
 .woocommerce-checkout #shipping_method li,
 .woocommerce-checkout ul.woocommerce-shipping-methods li,
 .woocommerce-checkout .woocommerce-shipping-methods li {
@@ -195,6 +196,7 @@
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+*/
 
 /* Theme-adaptive: Remove borders from classic checkout option container */
 .boxnow-classic-option {
