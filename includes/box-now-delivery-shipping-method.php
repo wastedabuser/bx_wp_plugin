@@ -48,6 +48,7 @@ function box_now_delivery_shipping_method()
                 $this->title = $this->get_option('title');
                 $this->free_delivery_threshold = $this->get_option('free_delivery_threshold');
                 $this->taxable = $this->get_option('taxable');
+                $this->tax_status = ('yes' === $this->taxable) ? 'taxable' : 'none';
             }
 
             /**
@@ -223,7 +224,7 @@ function box_now_delivery_shipping_method()
                 }
 
                 // Taxable yes or no
-                $taxable = ($this->taxable == 'yes') ? true : false;
+                $taxable = ('yes' === $this->taxable);
 
                 // Get the order total
                 $order_total = WC()->cart->get_displayed_subtotal();
@@ -257,19 +258,14 @@ function box_now_delivery_shipping_method()
                     // Anything heavier is already filtered out by
                     // has_oversized_products(), so the cost is always defined here.
                     $this->cost = (float) $this->get_option('costbr1');
-
-                    // Add 10% tax if taxable
-                    if ($taxable) {
-                        $this->cost *= 1.10;
-                    }
                 }
 
                 $rate = [
                     'id' => $this->id,
                     'label' => $this->title,
                     'cost' => $this->cost,
-                    'taxes' => $taxable ? WC_Tax::calc_shipping_tax($this->cost, WC_Tax::get_shipping_tax_rates()) : '',
-                    'calc_tax' => 'per_item',
+                    'taxes' => $taxable ? '' : false,
+                    'calc_tax' => 'per_order',
                 ];
 
                 // Register the rate.
